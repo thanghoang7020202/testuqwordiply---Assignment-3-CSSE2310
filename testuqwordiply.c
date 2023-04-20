@@ -1,15 +1,22 @@
 #include <stdlib.h>
-//#include <unistd.h>
+#include <unistd.h>
 #include <stdio.h>
-//#include <sys/wait.h>
+#include <sys/wait.h>
 #include <string.h>
 #include <ctype.h>
 #include <stdio.h>
-//#include <csse2310a3.h>
+#include <sys/stat.h>
+#include <fcntl.h> 
+#include <csse2310a3.h>
 
 #define QUIET 0
 #define PARALLEL 1
 #define MAX_JOBS 5000
+#define READ_END 0
+#define WRITE_END 1
+#define ERROR_END 2
+#define UQCMP1_END 3
+#define UQCMP2_END 4
 
 typedef struct cmdArg{
 	char flag[4];
@@ -19,10 +26,10 @@ typedef struct cmdArg{
 
 typedef struct job{
 	char* inputFileName;
+	FILE* inputFile;
 	char** args;
 	int numArgs;
 	int lineNum;
-	FILE* inputFile;
 } job;
 
 typedef struct job_List{
@@ -50,6 +57,11 @@ void exit_code_five(char* inputFileName, char* filename, int lineNum) {
 	exit(5);
 }
 
+void exit_code_six(char* filename) {
+	fprintf(stderr,"testuqwordiply: no jobs found in \"%s\"\n", filename);
+	exit(6);
+}
+
 cmdArg pre_run_checking(int argc, char* argv[]) {
 	//printf("argc = %d\n", argc);
 	cmdArg para_exist;
@@ -63,6 +75,9 @@ cmdArg pre_run_checking(int argc, char* argv[]) {
 	for (int i = 1 ; i < argc ; i++) {
 		//printf("argv[%d] = %s\n", i, argv[i]);
 		if (strstr(argv[i], "--") != NULL) {
+			if(para_exist.testprogram != NULL || para_exist.jobfile != NULL) {
+				exit_code_two();
+			}
 			if (!strcmp(argv[i], "--quiet") && !para_exist.flag[QUIET]) {
 				printf("in 1\n");
 				para_exist.flag[QUIET] = 1; // mark that quiet is set
@@ -73,12 +88,12 @@ cmdArg pre_run_checking(int argc, char* argv[]) {
 				para_exist.flag[PARALLEL] = 1; // mark that parallel is set
 				continue;
 			}
-				exit_code_two();
+			exit_code_two();
 		} else {
-			if(i == argc - 2) { // second last argument
+			if(i == argc - 2 && para_exist.testprogram == NULL) { // second last argument
 				para_exist.testprogram = argv[i];
 				continue;
-			} else if (i == argc - 1) { // last argument
+			} else if (i == argc - 1 && para_exist.jobfile == NULL) { // last argument
 				para_exist.jobfile = argv[i];
 				continue;
 			}
@@ -96,20 +111,24 @@ job_List line_splitter(FILE* jobFile, cmdArg para_exist) {
 	jobList.size = 0;
 	char* line = NULL;
 	for(int i = 0, lineNum = 1;(line = read_line(jobFile)) != NULL;lineNum++){
-		if(line[0] == '#' || line == ""){
+		if(line[0] == '#' || !strcmp(line,"")){
 			continue; // skip it if it is a comment line or empty line
 		}
 		char** splitedResult = split_line(line,',');
         if (splitedResult[0] == NULL || splitedResult[1] == NULL) {
-            // edit later!
+            // edit later ?
 			free(splitedResult);
             exit_code_four(para_exist.jobfile, lineNum);
         }
 		jobList.job[i].inputFileName = splitedResult[0];
-        char* noBrackets = (char*)malloc(sizeof(char)*(strlen(splitedResult[1]) - 2));
-        strncpy(noBrackets,splitedResult[1] +1, strlen(splitedResult[1]) - 2);
-		jobList.job[i].args = 
-				split_space_not_quote(noBrackets, &jobList.job[i].numArgs);
+		//6 Lines below help to relocate all element to its position + 1
+		//because first arg will be 'name of program' when using exec
+		char** jobArgs = split_space_not_quote(splitedResult[1], &jobList.job[i].numArgs);
+		jobList.job[i].args = (char**)malloc(sizeof(char*)*(++jobList.job[i].numArgs));
+		jobList.job[i].args[0] = jobList.job[i].inputFileName;
+		for( int argLoc = 0; argLoc < jobList.job[i].numArgs -1; argLoc++) {
+			jobList.job[i].args[argLoc +1] = jobArgs[argLoc];
+		}		
 		jobList.job[i].lineNum = lineNum;
 		if((jobList.job[i].inputFile = fopen(jobList.job[i].inputFileName, "r"))) {
 			exit_code_five(jobList.job[i].inputFileName, para_exist.jobfile, lineNum);
@@ -120,9 +139,119 @@ job_List line_splitter(FILE* jobFile, cmdArg para_exist) {
 		//noBrackets can not be free internally...
 		free(splitedResult);
 	}
-	
 	free(line);
+	if (jobList.size == 0) {
+		exit_code_six(para_exist.jobfile);
+	}
 	return jobList;
+}
+
+void job_runner(char* testprogram, job job) {
+    int devNull = open("/dev/null", O_WRONLY);
+	int stdout_TestProgToUqcmpFd[2];
+	int stdout_DemoProgToUqcmpFd[2];
+	int stderr_TestProgToUqcmpFd[2];
+	int stderr_DemoProgToUqcmpFd[2];
+	if(pipe(stdout_TestProgToUqcmpFd) == -1) {
+        perror("Creating pipe stdout from test program to uqcmp error!");
+        exit(1);
+    }
+	if(pipe(stderr_TestProgToUqcmpFd) == -1) {
+		perror("Creating pipe stderr from test program to uqcmp error!");
+        exit(1);
+	}
+	pid_t pidTestProg = fork();
+	if (pidTestProg == 0) {
+		// testprogram child process
+		int input_test = open(job.inputFileName, O_RDONLY);
+		dup2(input_test, STDIN_FILENO);
+
+		dup2(stdout_TestProgToUqcmpFd[WRITE_END],STDOUT_FILENO);
+		close(stdout_TestProgToUqcmpFd[READ_END]);
+		close(stdout_TestProgToUqcmpFd[WRITE_END]);
+		
+		dup2(stderr_TestProgToUqcmpFd[WRITE_END],STDERR_FILENO);
+		close(stderr_TestProgToUqcmpFd[READ_END]);
+		close(stderr_TestProgToUqcmpFd[WRITE_END]);
+		execvp(testprogram, job.args);
+		_exit(99);
+	}
+	if(pipe(stdout_DemoProgToUqcmpFd) == -1) {
+        perror("Creating pipe stdout from Demo to uqcmp error!");
+        exit(1);
+    }
+	if(pipe(stderr_DemoProgToUqcmpFd) == -1) {
+		perror("Creating pipe stderr from Demo to uqcmp error!");
+        exit(1);
+	}
+	pid_t pidDemo = fork();
+	if (pidDemo == 0) {
+		// demo child process
+		int input_test = open(job.inputFileName, O_RDONLY);
+		dup2(input_test, STDIN_FILENO);
+		dup2(stdout_DemoProgToUqcmpFd[WRITE_END],STDOUT_FILENO);
+		close(stdout_DemoProgToUqcmpFd[READ_END]);
+		close(stdout_DemoProgToUqcmpFd[WRITE_END]);
+		
+		dup2(stderr_DemoProgToUqcmpFd[WRITE_END],STDERR_FILENO);
+		close(stderr_DemoProgToUqcmpFd[READ_END]);
+		close(stderr_DemoProgToUqcmpFd[WRITE_END]);
+		execvp("demo-uqwordiply", job.args);
+		_exit(99);
+	}
+	pid_t pidUqcmpStdout = fork();
+	if (pidUqcmpStdout == 0) {
+		// uqcmp stdout child process
+		dup2(devNull, STDIN_FILENO); // ignore stdin
+		dup2(stdout_TestProgToUqcmpFd[READ_END], UQCMP1_END);
+		close(stdout_TestProgToUqcmpFd[READ_END]);
+		close(stdout_TestProgToUqcmpFd[WRITE_END]);
+
+		dup2(stdout_DemoProgToUqcmpFd[READ_END], UQCMP2_END);
+		close(stdout_DemoProgToUqcmpFd[READ_END]);
+		close(stdout_DemoProgToUqcmpFd[WRITE_END]);
+		execlp("uqcmp", "uqcmp", NULL);
+		_exit(99);
+	}
+	// parent process
+	close(stdout_TestProgToUqcmpFd[READ_END]);
+	close(stdout_TestProgToUqcmpFd[WRITE_END]);
+	
+	close(stdout_DemoProgToUqcmpFd[READ_END]);
+	close(stdout_DemoProgToUqcmpFd[WRITE_END]);
+
+	pid_t pidUqcmpStderr = fork();
+	if (pidUqcmpStderr == 0) {
+		// uqcmp stderr child process
+		dup2(devNull, STDIN_FILENO); // ignore stdin
+		dup2(stderr_TestProgToUqcmpFd[READ_END], UQCMP1_END);
+		close(stderr_TestProgToUqcmpFd[READ_END]);
+		close(stderr_TestProgToUqcmpFd[WRITE_END]);
+
+		dup2(stderr_DemoProgToUqcmpFd[READ_END], UQCMP2_END);
+		close(stderr_DemoProgToUqcmpFd[READ_END]);
+		close(stderr_DemoProgToUqcmpFd[WRITE_END]);
+		execlp("uqcmp", "uqcmp", NULL);
+		_exit(99);
+	}
+	// parent process
+
+	close(stderr_TestProgToUqcmpFd[READ_END]);
+	close(stderr_TestProgToUqcmpFd[WRITE_END]);
+	
+	close(stderr_DemoProgToUqcmpFd[READ_END]);
+	close(stderr_DemoProgToUqcmpFd[WRITE_END]);
+	int statusStdoutUqcmp, statusStderrUqcmp;
+	waitpid(pidUqcmpStdout, &statusStdoutUqcmp, 0);
+	if (WIFEXITED(statusStdoutUqcmp)) {
+		//exit statue will be here
+        exit(WEXITSTATUS(statusStdoutUqcmp));
+	}
+	waitpid(pidUqcmpStderr, &statusStderrUqcmp, 0);
+	if (WIFEXITED(statusStderrUqcmp)) {
+		//exit statue will be here
+        exit(WEXITSTATUS(statusStderrUqcmp));
+	}
 }
 
 int main(int argc, char* argv[]) {
@@ -132,27 +261,32 @@ int main(int argc, char* argv[]) {
 	if (testProgram == NULL) {
 		exit_code_three(para_exist.testprogram);
 	}
+	fclose(testProgram);
 	FILE *jobFile = fopen(para_exist.jobfile, "r");
 	
 	if (jobFile == NULL) {
 		exit_code_three(para_exist.jobfile);
 	}
-
 	job_List jobList = line_splitter(jobFile, para_exist);
 	
+	/* print for testing only!
 	for (int i = 0; i < jobList.size; i++) {
 		printf("there are %d argument(s) on line %d: ",jobList.job[i].numArgs, jobList.job[i].lineNum );
         for (int j = 0 ;j < jobList.job[i].numArgs; j++) {
             printf("[%s] ", jobList.job[i].args[j]);
         }
         printf("\n");
-    }
-
+    }*/
+	
+	//0 read(stdin), 1 write(stdout), 2error(stderr), 3 (uqcmp input), 4 (uqcmp input)
+	for(int i = 0; i < jobList.size; i++) {
+		job_runner(para_exist.testprogram, jobList.job[i]);
+	}
 	para_exist.jobfile = NULL;
 	free(para_exist.jobfile);
 	para_exist.testprogram = NULL;
 	free(para_exist.testprogram);
-	free(testProgram);
+	//free(testProgram); this already close!
 	free(jobFile);
 	return 0;
 }

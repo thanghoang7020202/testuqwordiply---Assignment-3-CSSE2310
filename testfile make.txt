@@ -1,0 +1,1 @@
+gcc -Wall -pedantic -std=gnu99 -g -I/local/courses/csse2310/include -L/local/courses/csse2310/lib -lcsse2310a3 -o testuqwordiply libtest.c
