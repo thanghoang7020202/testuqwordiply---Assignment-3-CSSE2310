@@ -17,7 +17,8 @@
 #define ERROR_END 2
 #define UQCMP1_END 3
 #define UQCMP2_END 4
-
+#define PID_UQCMP_STDOUT 0
+#define PID_UQCMP__STDERR 1
 typedef struct cmdArg{
 	char flag[4];
 	char* testprogram;
@@ -79,12 +80,10 @@ cmdArg pre_run_checking(int argc, char* argv[]) {
 				exit_code_two();
 			}
 			if (!strcmp(argv[i], "--quiet") && !para_exist.flag[QUIET]) {
-				printf("in 1\n");
 				para_exist.flag[QUIET] = 1; // mark that quiet is set
 				continue;
 			}
 			if (!strcmp(argv[i], "--parallel") && !para_exist.flag[PARALLEL]) {
-				printf("why it in 2\n");
 				para_exist.flag[PARALLEL] = 1; // mark that parallel is set
 				continue;
 			}
@@ -130,9 +129,10 @@ job_List line_splitter(FILE* jobFile, cmdArg para_exist) {
 			jobList.job[i].args[argLoc +1] = jobArgs[argLoc];
 		}		
 		jobList.job[i].lineNum = lineNum;
-		if((jobList.job[i].inputFile = fopen(jobList.job[i].inputFileName, "r"))) {
+		if((jobList.job[i].inputFile = fopen(jobList.job[i].inputFileName, "r")) == NULL) {
 			exit_code_five(jobList.job[i].inputFileName, para_exist.jobfile, lineNum);
 		}
+		//close(jobList.job[i].inputFile);
 		jobList.size++;
         i++;
 
@@ -146,7 +146,7 @@ job_List line_splitter(FILE* jobFile, cmdArg para_exist) {
 	return jobList;
 }
 
-void job_runner(char* testprogram, job job) {
+pid_t* job_runner(cmdArg para_exist, job job) {
     int devNull = open("/dev/null", O_WRONLY);
 	int stdout_TestProgToUqcmpFd[2];
 	int stdout_DemoProgToUqcmpFd[2];
@@ -173,7 +173,7 @@ void job_runner(char* testprogram, job job) {
 		dup2(stderr_TestProgToUqcmpFd[WRITE_END],STDERR_FILENO);
 		close(stderr_TestProgToUqcmpFd[READ_END]);
 		close(stderr_TestProgToUqcmpFd[WRITE_END]);
-		execvp(testprogram, job.args);
+		execvp(para_exist.testprogram, job.args);
 		_exit(99);
 	}
 	if(pipe(stdout_DemoProgToUqcmpFd) == -1) {
@@ -203,6 +203,9 @@ void job_runner(char* testprogram, job job) {
 	if (pidUqcmpStdout == 0) {
 		// uqcmp stdout child process
 		dup2(devNull, STDIN_FILENO); // ignore stdin
+		if (para_exist.flag[QUIET] == 1) {
+			dup2(devNull, STDOUT_FILENO); // ignore stdout
+		}
 		dup2(stdout_TestProgToUqcmpFd[READ_END], UQCMP1_END);
 		close(stdout_TestProgToUqcmpFd[READ_END]);
 		close(stdout_TestProgToUqcmpFd[WRITE_END]);
@@ -224,6 +227,9 @@ void job_runner(char* testprogram, job job) {
 	if (pidUqcmpStderr == 0) {
 		// uqcmp stderr child process
 		dup2(devNull, STDIN_FILENO); // ignore stdin
+		if (para_exist.flag[QUIET] == 1) {
+			dup2(devNull, STDOUT_FILENO); // ignore stdout
+		}
 		dup2(stderr_TestProgToUqcmpFd[READ_END], UQCMP1_END);
 		close(stderr_TestProgToUqcmpFd[READ_END]);
 		close(stderr_TestProgToUqcmpFd[WRITE_END]);
@@ -241,18 +247,31 @@ void job_runner(char* testprogram, job job) {
 	
 	close(stderr_DemoProgToUqcmpFd[READ_END]);
 	close(stderr_DemoProgToUqcmpFd[WRITE_END]);
+
+	pid_t* uqcmpPid = (pid_t*)malloc(sizeof(pid_t)*2);
+	uqcmpPid[PID_UQCMP_STDOUT] = pidUqcmpStdout;
+	uqcmpPid[PID_UQCMP__STDERR] = pidUqcmpStderr;
+	return uqcmpPid;
+}
+
+void result_reporter(pid_t* uqcmpPid, int jobNo) {
 	int statusStdoutUqcmp, statusStderrUqcmp;
-	waitpid(pidUqcmpStdout, &statusStdoutUqcmp, 0);
+	waitpid(uqcmpPid[PID_UQCMP_STDOUT], &statusStdoutUqcmp, 0);
+	fflush(stdout);
 	if (WIFEXITED(statusStdoutUqcmp)) {
 		//exit statue will be here
-        exit(WEXITSTATUS(statusStdoutUqcmp));
+		if (WEXITSTATUS(statusStdoutUqcmp) == 0) {
+			printf("Job %d: Stdout matches\n", jobNo);
+		}
 	}
-	waitpid(pidUqcmpStderr, &statusStderrUqcmp, 0);
+	waitpid(uqcmpPid[PID_UQCMP__STDERR], &statusStderrUqcmp, 0);
 	if (WIFEXITED(statusStderrUqcmp)) {
 		//exit statue will be here
-        exit(WEXITSTATUS(statusStderrUqcmp));
+		printf("Job %d: Stderr matches\n", jobNo);
 	}
 }
+
+
 
 int main(int argc, char* argv[]) {
 	cmdArg para_exist = pre_run_checking(argc, argv);
@@ -268,19 +287,13 @@ int main(int argc, char* argv[]) {
 		exit_code_three(para_exist.jobfile);
 	}
 	job_List jobList = line_splitter(jobFile, para_exist);
-	
-	/* print for testing only!
-	for (int i = 0; i < jobList.size; i++) {
-		printf("there are %d argument(s) on line %d: ",jobList.job[i].numArgs, jobList.job[i].lineNum );
-        for (int j = 0 ;j < jobList.job[i].numArgs; j++) {
-            printf("[%s] ", jobList.job[i].args[j]);
-        }
-        printf("\n");
-    }*/
-	
+
 	//0 read(stdin), 1 write(stdout), 2error(stderr), 3 (uqcmp input), 4 (uqcmp input)
 	for(int i = 0; i < jobList.size; i++) {
-		job_runner(para_exist.testprogram, jobList.job[i]);
+		printf("Starting job %d\n", i+1);
+		pid_t* uqcmpPid = job_runner(para_exist, jobList.job[i]);
+		sleep(2);
+		result_reporter(uqcmpPid, i+1);
 	}
 	para_exist.jobfile = NULL;
 	free(para_exist.jobfile);
