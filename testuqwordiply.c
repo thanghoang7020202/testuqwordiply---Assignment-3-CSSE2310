@@ -129,20 +129,21 @@ job_List line_splitter(FILE* jobFile, cmdArg para_exist) {
 		char** splitedResult = split_line(line,',');
         if (splitedResult[0] == NULL 
 			|| splitedResult[1] == NULL
-			|| !strcmp(splitedResult[0],"")
-			|| sizeof(splitedResult)/sizeof(char**) > 2) {
+			|| !strcmp(splitedResult[0],"")) {
 			free(splitedResult);
             exit_code_four(para_exist.jobfile, lineNum);
         }
 		jobList.job[i].inputFileName = splitedResult[0];
 		//6 Lines below help to relocate all element to its position + 1
 		//because first arg will be 'name of program' when using exec
+		//and last arg will be NULL
 		char** jobArgs = split_space_not_quote(splitedResult[1], &jobList.job[i].numArgs);
-		jobList.job[i].args = (char**)malloc(sizeof(char*)*(++jobList.job[i].numArgs));
+		jobList.job[i].args = (char**)malloc(sizeof(char*)*(++jobList.job[i].numArgs + 1));
 		jobList.job[i].args[0] = jobList.job[i].inputFileName;
 		for( int argLoc = 0; argLoc < jobList.job[i].numArgs -1; argLoc++) {
 			jobList.job[i].args[argLoc +1] = jobArgs[argLoc];
-		}		
+		}
+		jobList.job[i].args[jobList.job[i].numArgs -1] = (char*)0;		
 		jobList.job[i].lineNum = lineNum;
 		if((jobList.job[i].inputFile = fopen(jobList.job[i].inputFileName, "r")) == NULL) {
 			exit_code_five(jobList.job[i].inputFileName, para_exist.jobfile, lineNum);
@@ -279,10 +280,16 @@ bool result_reporter(pid_t* uqcmpPid, int jobNo) {
 		//exit statue will be here
 		if (WEXITSTATUS(statusStdoutUqcmp) == 0) {
 			printf("Job %d: Stdout matches\n", jobNo);
+			fflush(stdout);
 			passCounter++;
 		}
 		else if (WEXITSTATUS(statusStdoutUqcmp) == 5) {
-			printf("Job %d : Stdout differs", jobNo);
+			printf("Job %d : Stdout differs\n", jobNo);
+			fflush(stdout);
+		}
+		else {
+			printf("Job %d : Unable to execute test\n", jobNo);
+			fflush(stdout);
 		}
 	}
 	waitpid(uqcmpPid[PID_UQCMP__STDERR], &statusStderrUqcmp, 0);
@@ -290,10 +297,16 @@ bool result_reporter(pid_t* uqcmpPid, int jobNo) {
 		//exit statue will be here
 		if (WEXITSTATUS(statusStderrUqcmp) == 0) {
 			printf("Job %d: Stderr matches\n", jobNo);
+			fflush(stdout);
 			passCounter++;
 		}
 		else if (WEXITSTATUS(statusStdoutUqcmp) == 5) {
-			printf("Job %d : Stderr differs", jobNo);
+			printf("Job %d : Stderr differs\n", jobNo);
+			fflush(stdout);
+		}
+		else {
+			printf("Job %d : Unable to execute test\n", jobNo);
+			fflush(stdout);
 		}
 	}
 	return (passCounter == 2);
@@ -303,6 +316,7 @@ int prallel_runer(cmdArg para_exist, job_List jobList, int passCounter) {
 	pid_t** uqcmpPid = (pid_t**)malloc(sizeof(pid_t*)*jobList.size);
 	for(int i = 0; i < jobList.size; i++) {
 		printf("Starting job %d\n", i+1);
+		fflush(stdout);
 		uqcmpPid[i] = job_runner(para_exist, jobList.job[i]);
 	}
 	sleep(2);
@@ -324,6 +338,7 @@ int prallel_runer(cmdArg para_exist, job_List jobList, int passCounter) {
 int linear_runner(cmdArg para_exist, job_List jobList, int passCounter) {
 	for (int i = 0; i < jobList.size; i++) {
 		printf("Starting job %d\n", i+1);
+		fflush(stdout);
 		pid_t* uqcmpPid = job_runner(para_exist, jobList.job[i]);
 		sleep(2);
 		//kill
