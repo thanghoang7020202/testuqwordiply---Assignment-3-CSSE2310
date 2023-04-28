@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <sys/stat.h>
 #include <fcntl.h> 
+#include <stdbool.h>
 #include <csse2310a3.h>
 
 #define QUIET 0
@@ -17,8 +18,10 @@
 #define ERROR_END 2
 #define UQCMP1_END 3
 #define UQCMP2_END 4
-#define PID_UQCMP_STDOUT 0
-#define PID_UQCMP__STDERR 1
+#define PID_TESTPROG 0
+#define PID_DEMO 1
+#define PID_UQCMP_STDOUT 2
+#define PID_UQCMP__STDERR 3
 typedef struct cmdArg{
 	char flag[4];
 	char* testprogram;
@@ -113,9 +116,21 @@ job_List line_splitter(FILE* jobFile, cmdArg para_exist) {
 		if(line[0] == '#' || !strcmp(line,"")){
 			continue; // skip it if it is a comment line or empty line
 		}
+		int commaNum = 0;
+		for(int count = 0; line[count] ; count++) {
+			if(line[count]== ',') {
+				if (commaNum < 1) {
+					commaNum++;
+				} else {
+					exit_code_four(para_exist.jobfile, lineNum);
+				} 
+			}
+ 		}
 		char** splitedResult = split_line(line,',');
-        if (splitedResult[0] == NULL || splitedResult[1] == NULL) {
-            // edit later ?
+        if (splitedResult[0] == NULL 
+			|| splitedResult[1] == NULL
+			|| !strcmp(splitedResult[0],"")
+			|| sizeof(splitedResult)/sizeof(char**) > 2) {
 			free(splitedResult);
             exit_code_four(para_exist.jobfile, lineNum);
         }
@@ -248,53 +263,96 @@ pid_t* job_runner(cmdArg para_exist, job job) {
 	close(stderr_DemoProgToUqcmpFd[READ_END]);
 	close(stderr_DemoProgToUqcmpFd[WRITE_END]);
 
-	pid_t* uqcmpPid = (pid_t*)malloc(sizeof(pid_t)*2);
+	pid_t* uqcmpPid = (pid_t*)malloc(sizeof(pid_t)*4);
+	uqcmpPid[PID_TESTPROG] = pidTestProg;
+	uqcmpPid[PID_DEMO] = pidDemo;
 	uqcmpPid[PID_UQCMP_STDOUT] = pidUqcmpStdout;
 	uqcmpPid[PID_UQCMP__STDERR] = pidUqcmpStderr;
 	return uqcmpPid;
 }
 
-void result_reporter(pid_t* uqcmpPid, int jobNo) {
-	int statusStdoutUqcmp, statusStderrUqcmp;
+bool result_reporter(pid_t* uqcmpPid, int jobNo) {
+	int statusStdoutUqcmp = 0, statusStderrUqcmp = 0, passCounter = 0;
 	waitpid(uqcmpPid[PID_UQCMP_STDOUT], &statusStdoutUqcmp, 0);
 	fflush(stdout);
 	if (WIFEXITED(statusStdoutUqcmp)) {
 		//exit statue will be here
 		if (WEXITSTATUS(statusStdoutUqcmp) == 0) {
 			printf("Job %d: Stdout matches\n", jobNo);
+			passCounter++;
+		}
+		else if (WEXITSTATUS(statusStdoutUqcmp) == 5) {
+			printf("Job %d : Stdout differs", jobNo);
 		}
 	}
 	waitpid(uqcmpPid[PID_UQCMP__STDERR], &statusStderrUqcmp, 0);
 	if (WIFEXITED(statusStderrUqcmp)) {
 		//exit statue will be here
-		printf("Job %d: Stderr matches\n", jobNo);
+		if (WEXITSTATUS(statusStderrUqcmp) == 0) {
+			printf("Job %d: Stderr matches\n", jobNo);
+			passCounter++;
+		}
+		else if (WEXITSTATUS(statusStdoutUqcmp) == 5) {
+			printf("Job %d : Stderr differs", jobNo);
+		}
 	}
+	return (passCounter == 2);
 }
 
+int prallel_runer(cmdArg para_exist, job_List jobList, int passCounter) {
+	pid_t** uqcmpPid = (pid_t**)malloc(sizeof(pid_t*)*jobList.size);
+	for(int i = 0; i < jobList.size; i++) {
+		printf("Starting job %d\n", i+1);
+		uqcmpPid[i] = job_runner(para_exist, jobList.job[i]);
+	}
+	sleep(2);
+	//kill
+	for (int i = 0; i < jobList.size; i++) {
+		kill(uqcmpPid[i][PID_TESTPROG], SIGKILL);
+		kill(uqcmpPid[i][PID_DEMO], SIGKILL);
+		kill(uqcmpPid[i][PID_UQCMP_STDOUT], SIGKILL);
+		kill(uqcmpPid[i][PID_UQCMP__STDERR], SIGKILL);
+	}
+	for (int i = 0; i < jobList.size; i++) {
+		(result_reporter(uqcmpPid[i], i+1))? passCounter++ : passCounter;
+		free(uqcmpPid[i]);
+	}
+	free(uqcmpPid);
+	return passCounter;
+}
 
+int linear_runner(cmdArg para_exist, job_List jobList, int passCounter) {
+	for (int i = 0; i < jobList.size; i++) {
+		printf("Starting job %d\n", i+1);
+		pid_t* uqcmpPid = job_runner(para_exist, jobList.job[i]);
+		sleep(2);
+		//kill
+		kill(uqcmpPid[PID_TESTPROG], SIGKILL);
+		kill(uqcmpPid[PID_DEMO], SIGKILL);
+		kill(uqcmpPid[PID_UQCMP_STDOUT], SIGKILL);
+		kill(uqcmpPid[PID_UQCMP__STDERR], SIGKILL);
+		(result_reporter(uqcmpPid, i+1))? passCounter++ : passCounter;
+		free(uqcmpPid);
+	}
+	return passCounter;
+}
 
 int main(int argc, char* argv[]) {
 	cmdArg para_exist = pre_run_checking(argc, argv);
 	
-	FILE *testProgram = fopen(para_exist.testprogram, "r");
-	if (testProgram == NULL) {
-		exit_code_three(para_exist.testprogram);
-	}
-	fclose(testProgram);
 	FILE *jobFile = fopen(para_exist.jobfile, "r");
-	
 	if (jobFile == NULL) {
 		exit_code_three(para_exist.jobfile);
 	}
 	job_List jobList = line_splitter(jobFile, para_exist);
-
+	int passCounter = 0;
 	//0 read(stdin), 1 write(stdout), 2error(stderr), 3 (uqcmp input), 4 (uqcmp input)
-	for(int i = 0; i < jobList.size; i++) {
-		printf("Starting job %d\n", i+1);
-		pid_t* uqcmpPid = job_runner(para_exist, jobList.job[i]);
-		sleep(2);
-		result_reporter(uqcmpPid, i+1);
+	if (para_exist.flag[PARALLEL] == 1) { // parallel run
+		passCounter = prallel_runer(para_exist, jobList, passCounter);
+	} else { // linear run
+		passCounter = linear_runner(para_exist, jobList, passCounter);
 	}
+	printf("testuqwordiply: %d out of %d tests passed\n", passCounter, jobList.size);
 	para_exist.jobfile = NULL;
 	free(para_exist.jobfile);
 	para_exist.testprogram = NULL;
