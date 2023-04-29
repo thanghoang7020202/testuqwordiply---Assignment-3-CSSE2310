@@ -292,12 +292,8 @@ bool result_reporter(pid_t* uqcmpPid, int jobNo) {
 			fflush(stdout);
 			passCounter++;
 		}
-		else if (WEXITSTATUS(statusStdoutUqcmp) == 5) {
-			printf("Job %d: Stdout differs\n", jobNo);
-			fflush(stdout);
-		}
 		else {
-			printf("Job %d: Unable to execute test\n", jobNo);
+			printf("Job %d: Stdout differs\n", jobNo);
 			fflush(stdout);
 		}
 	}
@@ -309,14 +305,11 @@ bool result_reporter(pid_t* uqcmpPid, int jobNo) {
 			fflush(stdout);
 			passCounter++;
 		}
-		else if (WEXITSTATUS(statusStderrUqcmp) == 5) {
+		else {
 			printf("Job %d: Stderr differs\n", jobNo);
 			fflush(stdout);
 		}
-		else {
-			printf("Job %d: Unable to execute test\n", jobNo);
-			fflush(stdout);
-		}
+
 	}
 	waitpid(uqcmpPid[PID_TESTPROG], &statusTestprog, 0);
 	waitpid(uqcmpPid[PID_DEMO], &statusDemo, 0);
