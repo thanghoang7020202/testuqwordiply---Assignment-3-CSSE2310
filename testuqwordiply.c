@@ -22,7 +22,7 @@
 #define PID_DEMO 1
 #define PID_UQCMP_STDOUT 2
 #define PID_UQCMP__STDERR 3
-
+#define UQCMP_PREFIX_LEN 13
 typedef struct cmdArg{
 	char flag[4];
 	char* testprogram;
@@ -144,7 +144,7 @@ job_List line_splitter(FILE* jobFile, cmdArg para_exist) {
 		for( int argLoc = 0; argLoc < jobList.job[i].numArgs -1; argLoc++) {
 			jobList.job[i].args[argLoc +1] = jobArgs[argLoc];
 		}
-		jobList.job[i].args[jobList.job[i].numArgs -1] = (char*)0;		
+		jobList.job[i].args[jobList.job[i].numArgs] = (char*)0;		
 		jobList.job[i].lineNum = lineNum;
 		if((jobList.job[i].inputFile = fopen(jobList.job[i].inputFileName, "r")) == NULL) {
 			exit_code_five(jobList.job[i].inputFileName, para_exist.jobfile, lineNum);
@@ -163,7 +163,7 @@ job_List line_splitter(FILE* jobFile, cmdArg para_exist) {
 	return jobList;
 }
 
-pid_t* job_runner(cmdArg para_exist, job job) {
+pid_t* job_runner(cmdArg para_exist, job job, int jobNo) {
     int devNull = open("/dev/null", O_WRONLY);
 	int stdout_TestProgToUqcmpFd[2];
 	int stdout_DemoProgToUqcmpFd[2];
@@ -230,7 +230,9 @@ pid_t* job_runner(cmdArg para_exist, job job) {
 		dup2(stdout_DemoProgToUqcmpFd[READ_END], UQCMP2_END);
 		close(stdout_DemoProgToUqcmpFd[READ_END]);
 		close(stdout_DemoProgToUqcmpFd[WRITE_END]);
-		execlp("uqcmp", "uqcmp", NULL);
+		char uqcmpName[UQCMP_PREFIX_LEN];
+		sprintf (uqcmpName,"Job %d stdout",jobNo);
+		execlp("uqcmp", "uqcmp", uqcmpName, NULL);
 		_exit(99);
 	}
 	// parent process
@@ -254,7 +256,9 @@ pid_t* job_runner(cmdArg para_exist, job job) {
 		dup2(stderr_DemoProgToUqcmpFd[READ_END], UQCMP2_END);
 		close(stderr_DemoProgToUqcmpFd[READ_END]);
 		close(stderr_DemoProgToUqcmpFd[WRITE_END]);
-		execlp("uqcmp", "uqcmp", NULL);
+		char uqcmpName[UQCMP_PREFIX_LEN];
+		sprintf (uqcmpName,"Job %d stderr",jobNo);
+		execlp("uqcmp", "uqcmp", uqcmpName, NULL);
 		_exit(99);
 	}
 	// parent process
@@ -274,7 +278,11 @@ pid_t* job_runner(cmdArg para_exist, job job) {
 }
 
 bool result_reporter(pid_t* uqcmpPid, int jobNo) {
-	int statusStdoutUqcmp = 0, statusStderrUqcmp = 0, passCounter = 0;
+	int statusStdoutUqcmp = 0;
+	int statusStderrUqcmp = 0;
+	int statusTestprog = 0;
+	int statusDemo = 0;
+	int passCounter = 0;
 	waitpid(uqcmpPid[PID_UQCMP_STDOUT], &statusStdoutUqcmp, 0);
 	fflush(stdout);
 	if (WIFEXITED(statusStdoutUqcmp)) {
@@ -285,11 +293,11 @@ bool result_reporter(pid_t* uqcmpPid, int jobNo) {
 			passCounter++;
 		}
 		else if (WEXITSTATUS(statusStdoutUqcmp) == 5) {
-			printf("Job %d : Stdout differs\n", jobNo);
+			printf("Job %d: Stdout differs\n", jobNo);
 			fflush(stdout);
 		}
 		else {
-			printf("Job %d : Unable to execute test\n", jobNo);
+			printf("Job %d: Unable to execute test\n", jobNo);
 			fflush(stdout);
 		}
 	}
@@ -301,16 +309,27 @@ bool result_reporter(pid_t* uqcmpPid, int jobNo) {
 			fflush(stdout);
 			passCounter++;
 		}
-		else if (WEXITSTATUS(statusStdoutUqcmp) == 5) {
-			printf("Job %d : Stderr differs\n", jobNo);
+		else if (WEXITSTATUS(statusStderrUqcmp) == 5) {
+			printf("Job %d: Stderr differs\n", jobNo);
 			fflush(stdout);
 		}
 		else {
-			printf("Job %d : Unable to execute test\n", jobNo);
+			printf("Job %d: Unable to execute test\n", jobNo);
 			fflush(stdout);
 		}
 	}
-	return (passCounter == 2);
+	waitpid(uqcmpPid[PID_TESTPROG], &statusTestprog, 0);
+	waitpid(uqcmpPid[PID_DEMO], &statusDemo, 0);
+	if (WEXITSTATUS(statusTestprog) == WEXITSTATUS(statusDemo)) {
+		passCounter++;
+		printf("Job %d: Exit status matches\n", jobNo);
+		fflush(stdout);
+	}
+	else {
+		printf("Job %d: Exit status differs\n", jobNo);
+		fflush(stdout);
+	}
+	return (passCounter == 3);
 }
 
 int prallel_runer(cmdArg para_exist, job_List jobList, int passCounter) {
@@ -318,7 +337,7 @@ int prallel_runer(cmdArg para_exist, job_List jobList, int passCounter) {
 	for(int i = 0; i < jobList.size; i++) {
 		printf("Starting job %d\n", i+1);
 		fflush(stdout);
-		uqcmpPid[i] = job_runner(para_exist, jobList.job[i]);
+		uqcmpPid[i] = job_runner(para_exist, jobList.job[i], i+1);
 	}
 	sleep(2);
 	//kill
@@ -340,7 +359,7 @@ int linear_runner(cmdArg para_exist, job_List jobList, int passCounter) {
 	for (int i = 0; i < jobList.size; i++) {
 		printf("Starting job %d\n", i+1);
 		fflush(stdout);
-		pid_t* uqcmpPid = job_runner(para_exist, jobList.job[i]);
+		pid_t* uqcmpPid = job_runner(para_exist, jobList.job[i], i+1);
 		sleep(2);
 		//kill
 		kill(uqcmpPid[PID_TESTPROG], SIGKILL);
@@ -375,5 +394,5 @@ int main(int argc, char* argv[]) {
 	free(para_exist.testprogram);
 	//free(testProgram); this already close!
 	free(jobFile);
-	return 0;
+	return (jobList.size - passCounter)? 1 : 0;
 }
