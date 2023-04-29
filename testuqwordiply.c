@@ -22,6 +22,7 @@
 #define PID_DEMO 1
 #define PID_UQCMP_STDOUT 2
 #define PID_UQCMP__STDERR 3
+
 typedef struct cmdArg{
 	char flag[4];
 	char* testprogram;
