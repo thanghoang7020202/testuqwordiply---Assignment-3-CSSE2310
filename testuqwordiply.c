@@ -23,6 +23,11 @@
 #define PID_UQCMP_STDOUT 2
 #define PID_UQCMP__STDERR 3
 #define UQCMP_PREFIX_LEN 13
+
+// Used for controling the number of job in linear run
+int violatialJobSize = -1; 
+int jobRun = 0;
+
 typedef struct cmdArg{
 	char flag[4];
 	char* testprogram;
@@ -327,20 +332,21 @@ bool result_reporter(pid_t* uqcmpPid, int jobNo) {
 
 int prallel_runer(cmdArg para_exist, job_List jobList, int passCounter) {
 	pid_t** uqcmpPid = (pid_t**)malloc(sizeof(pid_t*)*jobList.size);
-	for(int i = 0; i < jobList.size; i++) {
-		printf("Starting job %d\n", i+1);
+	violatialJobSize = jobList.size;
+	for(; jobRun < violatialJobSize; jobRun++) {
+		printf("Starting job %d\n", jobRun+1);
 		fflush(stdout);
-		uqcmpPid[i] = job_runner(para_exist, jobList.job[i], i+1);
+		uqcmpPid[jobRun] = job_runner(para_exist, jobList.job[jobRun], jobRun+1);
 	}
 	sleep(2);
 	//kill
-	for (int i = 0; i < jobList.size; i++) {
+	for (int i = 0; i < violatialJobSize; i++) {
 		kill(uqcmpPid[i][PID_TESTPROG], SIGKILL);
 		kill(uqcmpPid[i][PID_DEMO], SIGKILL);
 		kill(uqcmpPid[i][PID_UQCMP_STDOUT], SIGKILL);
 		kill(uqcmpPid[i][PID_UQCMP__STDERR], SIGKILL);
 	}
-	for (int i = 0; i < jobList.size; i++) {
+	for (int i = 0; i < violatialJobSize; i++) {
 		(result_reporter(uqcmpPid[i], i+1))? passCounter++ : passCounter;
 		free(uqcmpPid[i]);
 	}
@@ -349,23 +355,29 @@ int prallel_runer(cmdArg para_exist, job_List jobList, int passCounter) {
 }
 
 int linear_runner(cmdArg para_exist, job_List jobList, int passCounter) {
-	for (int i = 0; i < jobList.size; i++) {
-		printf("Starting job %d\n", i+1);
+	violatialJobSize = jobList.size;
+	for (; jobRun < violatialJobSize; jobRun++) {
+		printf("Starting job %d\n", jobRun+1);
 		fflush(stdout);
-		pid_t* uqcmpPid = job_runner(para_exist, jobList.job[i], i+1);
+		pid_t* uqcmpPid = job_runner(para_exist, jobList.job[jobRun], jobRun+1);
 		sleep(2);
 		//kill
 		kill(uqcmpPid[PID_TESTPROG], SIGKILL);
 		kill(uqcmpPid[PID_DEMO], SIGKILL);
 		kill(uqcmpPid[PID_UQCMP_STDOUT], SIGKILL);
 		kill(uqcmpPid[PID_UQCMP__STDERR], SIGKILL);
-		(result_reporter(uqcmpPid, i+1))? passCounter++ : passCounter;
+		(result_reporter(uqcmpPid, jobRun+1))? passCounter++ : passCounter;
 		free(uqcmpPid);
 	}
 	return passCounter;
 }
 
+void handle_sigint(int sig) {
+	violatialJobSize = jobRun +1;
+}
+
 int main(int argc, char* argv[]) {
+	signal(SIGINT, handle_sigint);
 	cmdArg para_exist = pre_run_checking(argc, argv);
 	
 	FILE *jobFile = fopen(para_exist.jobfile, "r");
@@ -380,12 +392,15 @@ int main(int argc, char* argv[]) {
 	} else { // linear run
 		passCounter = linear_runner(para_exist, jobList, passCounter);
 	}
-	printf("testuqwordiply: %d out of %d tests passed\n", passCounter, jobList.size);
+	if (violatialJobSize == -1){
+		violatialJobSize = jobList.size;
+	}
+	printf("testuqwordiply: %d out of %d tests passed\n", passCounter, violatialJobSize);
 	para_exist.jobfile = NULL;
 	free(para_exist.jobfile);
 	para_exist.testprogram = NULL;
 	free(para_exist.testprogram);
 	//free(testProgram); this already close!
 	free(jobFile);
-	return (jobList.size - passCounter)? 1 : 0;
+	return (violatialJobSize - passCounter)? 1 : 0;
 }
