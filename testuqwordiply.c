@@ -146,6 +146,18 @@ void exit_code_six(char* filename) {
     exit(6);
 }
 
+/*
+ * pre_run_checking()
+ * --------------------
+ * check the validity of command line argument
+ * and pre-defind all the arguments
+ * 
+ * argc: number of command line argument
+ * argv: array of command line argument
+ * 
+ * Returns: a struct the contains the information of command line argument
+ *        (see CmdArg struct)
+ */
 CmdArg pre_run_checking(int argc, char* argv[]) {
     //printf("argc = %d\n", argc);
     CmdArg paraExist;
@@ -156,8 +168,7 @@ CmdArg pre_run_checking(int argc, char* argv[]) {
     if (argc < 3) {
         exit_code_two();
     }
-    for (int i = 1; i < argc; i++) {
-	//printf("argv[%d] = %s\n", i, argv[i]);
+    for (int i = 1; i < argc; i++) { // check all the arguments
     	if (strstr(argv[i], "--") != NULL) {
     	    if (paraExist.testprogram != NULL || paraExist.jobfile != NULL) {
     	        exit_code_two();
@@ -185,60 +196,82 @@ CmdArg pre_run_checking(int argc, char* argv[]) {
         }
     }
     if (paraExist.jobfile == NULL || paraExist.testprogram == NULL) {
-	exit_code_two();
+        exit_code_two();
     }
     return paraExist;
 }
 
-JobsList line_splitter(FILE* jobFile, CmdArg paraExist) {
-    JobsList jobList;
-    jobList.size = 0;
-    char* line = NULL;
-    for(int i = 0, lineNum = 1;(line = read_line(jobFile)) != NULL;lineNum++){
-	if(line[0] == '#' || !strcmp(line,"")){
-	    continue; // skip it if it is a comment line or empty line
-	}
-        int commaNum = 0;
-	for(int count = 0; line[count] ; count++) {
-	    if(line[count]== ',') {
+/*
+ * comma_counter()
+ * --------------------
+ * count the number of comma in the line
+ * 
+ * line: pointer to the string that will be used to count
+ * 
+ * Returns: 1 if there is only one comma in the line
+ */
+int comma_counter(char* line) {
+    int commaNum = 0;
+    for (int count = 0; line[count]; count++) {
+	    if (line[count]== ',') {
 	        if (commaNum < 1) {
-		    commaNum++;
+                commaNum++;
 	        } else {
-		    exit_code_four(paraExist.jobfile, lineNum);
+                return 0;
 	        }    
 	    }
  	}
+    return 1;
+}
+/*
+ * line_splitter()
+ * --------------------
+ * split the line in job file into job
+ * 
+ * jobFile: pointer to job file
+ * paraExist: a struct that contains the information of command line argument
+ *       (see CmdArg struct)
+ * 
+ * Returns: a struct that contains the information of all the jobs
+ */
+JobsList line_splitter(FILE* jobFile, CmdArg paraExist) {
+    JobsList jobList;
+    jobList.size = 0; // initialize the size of job list
+    char* line = NULL;
+    for (int i = 0, lineNum = 1;
+            (line = read_line(jobFile)) != NULL; lineNum++) {
+	if (line[0] == '#' || !strcmp(line,"")) {
+	    continue; // skip it if it is a comment line or empty line
+	}
+    if (!comma_counter(line)) {
+        exit_code_four(paraExist.jobfile, lineNum);
+    }
 	char** splitedResult = split_line(line,',');
-        if (splitedResult[0] == NULL 
-                || splitedResult[1] == NULL
+        if (splitedResult[0] == NULL || splitedResult[1] == NULL
 		|| !strcmp(splitedResult[0],"")) {
 	    free(splitedResult);
             exit_code_four(paraExist.jobfile, lineNum);
         }
 	jobList.job[i].inputFileName = splitedResult[0];
 	//6 Lines below help to relocate all element to its position + 1
-	//because first arg will be 'name of program' when using exec
-	//and last arg will be NULL
 	char** jobArgs = split_space_not_quote(splitedResult[1], 
                 &jobList.job[i].numArgs);
 	jobList.job[i].args =
             (char**)malloc(sizeof(char*)*(++jobList.job[i].numArgs + 1));
 	jobList.job[i].args[0] = jobList.job[i].inputFileName;
-	for(int argLoc = 0; argLoc < jobList.job[i].numArgs -1; argLoc++) {
+	for (int argLoc = 0; argLoc < jobList.job[i].numArgs -1; argLoc++) {
 	    jobList.job[i].args[argLoc +1] = jobArgs[argLoc];
 	}
-	jobList.job[i].args[jobList.job[i].numArgs] = (char*)0;		
+    //set last element to NULL
+	jobList.job[i].args[jobList.job[i].numArgs] = (char*)0; 	
 	jobList.job[i].lineNum = lineNum;
-	if((jobList.job[i].inputFile = 
+	if ((jobList.job[i].inputFile = 
                     fopen(jobList.job[i].inputFileName, "r")) == NULL) {
 	    exit_code_five(jobList.job[i].inputFileName, 
                     paraExist.jobfile, lineNum);
 	}
-	//close(jobList.job[i].inputFile);
 	jobList.size++;
         i++;
-	
-        //noBrackets can not be free internally...
         free(splitedResult);
     }
     free(line);
@@ -248,6 +281,18 @@ JobsList line_splitter(FILE* jobFile, CmdArg paraExist) {
     return jobList;
 }
 
+/*
+ * job_runner()
+ * --------------------
+ * run the given job
+ * 
+ * paraExist: a struct that contains the information of command line argument
+ *      (see CmdArg struct)
+ * job: a struct that contains the information of a job
+ * jobNo: the index of that job
+ * 
+ * Returns: a pointer to all pids created by this job
+*/
 pid_t* job_runner(CmdArg paraExist, Job job, int jobNo) {
     int stdoutTestProgToUqcmpFd[2];
     int stdoutDemoProgToUqcmpFd[2];
@@ -379,7 +424,7 @@ pid_t* job_runner(CmdArg paraExist, Job job, int jobNo) {
  * uqcmpPid: the array of pid of test program, demo-uqwordiply and uqcmp
  * jobNo: the job number
  * 
- * Return: true if all the result matches, false otherwise
+ * Returns: true if all the result matches, false otherwise
  */
 bool result_reporter(pid_t* pids, int jobNo) {
     int statusStdoutUqcmp = 0;
@@ -404,7 +449,7 @@ bool result_reporter(pid_t* pids, int jobNo) {
     if (WIFEXITED(statusStderrUqcmp)) {
 	//exit statue will be here
 	if (WEXITSTATUS(statusStderrUqcmp) == 0) {
-    	    printf("Job %d: Stderr matches\n", jobNo);
+            printf("Job %d: Stderr matches\n", jobNo);
 	    fflush(stdout);
 	    passCounter++;
         } else {
@@ -434,7 +479,7 @@ bool result_reporter(pid_t* pids, int jobNo) {
  * jobList: the struct that contains all the jobs
  * passCounter: the counter that counts the number of passed jobs
  * 
- * Return: the number of passed jobs
+ * Returns: the number of passed jobs
  */
 int prallel_runer(CmdArg paraExist, JobsList jobList, int passCounter) {
     pid_t** uqcmpPid = (pid_t**)malloc(sizeof(pid_t*) * jobList.size);
