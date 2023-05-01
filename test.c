@@ -1,26 +1,27 @@
-#include <stdio.h> 
-#include <stdlib.h> 
-#include <unistd.h> //exec
-#include <sys/stat.h> // open
+#include <stdlib.h>
+#include <unistd.h>
+#include <stdio.h>
+#include <sys/wait.h>
+#include <string.h>
+#include <ctype.h>
+#include <stdio.h>
+#include <sys/stat.h>
 #include <fcntl.h> 
- 
- 
+#include <stdbool.h>
+#include <time.h>
+//#include <csse2310a3.h>
+
+struct timespec start = {2,0},remain;
+int timeGetter = 0;
+void handle_sigint(int sig) {
+    printf("I'll keep running!!!\n");
+    timeGetter = nanosleep(&remain, &remain);
+}
+
 int main(int argc, char** argv){ 
-    if (argc < 3){ 
-        return 1; 
-    } 
- 
-    // Open files 
-        int rf = open(argv[1],O_RDONLY); 
-        int wf = open(argv[2],O_WRONLY | O_CREAT); 
-        if (rf == -1 || wf == -1) exit(2); 
-    // Redirect stdin and stdout 
-        /*dup2(rf,STDIN_FILENO); 
-        dup2(wf,STDOUT_FILENO); */
-        close(rf); 
-        close(wf); 
-    // Execute md5sum
-        execlp("ls","ls",(char*)NULL);
-    //execlp("./md5sum","md5sum","STDIN_FILENO","STDOUT_FILENO",(char*)0); 
+    signal(SIGINT, handle_sigint);    
+    timeGetter = nanosleep(&start, &remain); 
+        printf("Good sleep!\n");
+        printf("Remaining time is: %lld.%.9ld", (long long)remain.tv_sec, remain.tv_nsec);  
     return 0; 
 }

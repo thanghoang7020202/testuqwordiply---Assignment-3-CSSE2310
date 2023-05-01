@@ -8,6 +8,7 @@
 #include <sys/stat.h>
 #include <fcntl.h> 
 #include <stdbool.h>
+#include <time.h>
 #include <csse2310a3.h>
 
 #define QUIET 0
@@ -23,8 +24,24 @@
 #define PID_UQCMP_STDOUT 2
 #define PID_UQCMP__STDERR 3
 #define UQCMP_PREFIX_LEN 13
+#define SLEEP_TIME_SEC 2
+#define SLEEP_TIME_NANO 0
 
 // Used for controling the number of job in linear run
+// and continue sleeping time
+/*
+ * start time of sleep for 2 seconds
+ */
+struct timespec start = {SLEEP_TIME_SEC, SLEEP_TIME_NANO};
+
+/*
+ * remaining time of sleep
+ */
+struct timespec remaining;
+/*
+ * return value of nanosleep
+ */
+int timeGetter = 0;
 /*
  * actual job size that has been run
  * (violatileJobSize <= JobsList.size)
@@ -35,12 +52,28 @@ int violatileJobSize = -1;
  */
 int jobRun = 0;
 
+/*
+ * struct for command line argument
+ * flag[QUIET] = 1 if --quiet is set
+ * flag[PARALLEL] = 1 if --parallel is set
+ * flag[]
+ * testprogram = name of test program
+ * jobfile = name of job file
+ */
 typedef struct CmdArg {
-    char flag[4];
+    char flag[4]; // may change
     char* testprogram;
     char* jobfile; 
 } CmdArg;
 
+/*
+ * struct for job
+ * inputFileName = name of input file
+ * inputFile = pointer to input file
+ * args = array of arguments
+ * numArgs = number of arguments
+ * lineNum = line number of job in job file
+ */
 typedef struct Job {
     char* inputFileName;
     FILE* inputFile;
@@ -49,35 +82,65 @@ typedef struct Job {
     int lineNum;
 } Job;
 
+/*
+ * struct for job list (array of jobs)
+ * job = array of jobs
+ * size = number of jobs
+ */
 typedef struct JobsList {
     Job job[MAX_JOBS];
     int size;
 } JobsList;
 
+/*
+ * exit_code_two()
+ * --------------------
+ * exit with code 2 and its message of testuqwordiply usage
+ */
 void exit_code_two() {
     fprintf(stderr, "Usage: testuqwordiply [--quiet] [--parallel]"
             " testprogram jobfile\n");
     exit(2);
 }
 
+/*
+ * exit_code_three()
+ * --------------------
+ * exit with code 3 and the message: unable to open job file
+ */
 void exit_code_three(char* filename) {
     fprintf(stderr, "testuqwordiply: Unable to open job file"
             " \"%s\"\n", filename);
     exit(3);
 }
 
+/*
+ * exit_code_four()
+ * --------------------
+ * exit with code 4 and its message of syntax error
+ */
 void exit_code_four(char* filename, int lineNum) {
     fprintf(stderr, "testuqwordiply: syntax error on line %d "
             "of \"%s\"\n", lineNum, filename);
     exit(4);
 }
 
+/*
+ * exit_code_five()
+ * --------------------
+ * exit with code 5 and its message of unable to open file
+ */
 void exit_code_five(char* inputFileName, char* filename, int lineNum) {
     fprintf(stderr, "testuqwordiply: unable to open file \"%s\" specified on"
             " line %d of \"%s\"\n", inputFileName, lineNum, filename);
     exit(5);
 }
 
+/*
+ * exit_code_six()
+ * --------------------
+ * exit with code 6 and its message of no jobs found
+ */
 void exit_code_six(char* filename) {
     fprintf(stderr, "testuqwordiply: no jobs found in \"%s\"\n", filename);
     exit(6);
@@ -382,7 +445,7 @@ int prallel_runer(CmdArg paraExist, JobsList jobList, int passCounter) {
     	uqcmpPid[jobRun] = 
                 job_runner(paraExist, jobList.job[jobRun], jobRun + 1);
     }
-    sleep(2);
+    timeGetter = nanosleep(&start, &remaining);
     for (int i = 0; i < violatileJobSize; i++) {
         kill(uqcmpPid[i][PID_TESTPROG], SIGKILL);
     	kill(uqcmpPid[i][PID_DEMO], SIGKILL);
@@ -413,7 +476,7 @@ int linear_runner(CmdArg paraExist, JobsList jobList, int passCounter) {
     	fflush(stdout);
     	pid_t* uqcmpPid = job_runner(paraExist, 
                 jobList.job[jobRun], jobRun + 1);
-    	sleep(2);
+    	timeGetter = nanosleep(&start, &remaining);
     	//kill
     	kill(uqcmpPid[PID_TESTPROG], SIGKILL);
     	kill(uqcmpPid[PID_DEMO], SIGKILL);
@@ -437,6 +500,8 @@ int linear_runner(CmdArg paraExist, JobsList jobList, int passCounter) {
  */
 void handle_sigint(int sig) {
     violatileJobSize = jobRun + 1;
+    // if remaining time is not 0, then continue to sleep
+    timeGetter = nanosleep(&remaining, &remaining);
 }
 
 int main(int argc, char* argv[]) {
@@ -463,7 +528,6 @@ int main(int argc, char* argv[]) {
     free(paraExist.jobfile);
     paraExist.testprogram = NULL;
     free(paraExist.testprogram);
-    //free(testProgram); this already close!
     free(jobFile);
     return (violatileJobSize - passCounter) ? 1 : 0;
 }
