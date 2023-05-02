@@ -27,30 +27,12 @@
 #define SLEEP_TIME_SEC 2
 #define SLEEP_TIME_NANO 0
 
-// Used for controling the number of job in linear run
-// and continue sleeping time
 /*
- * start time of sleep for 2 seconds
+ * flag of interupt signal
+ * 0 = not interupted
+ * 1 = interupted
  */
-struct timespec start = {SLEEP_TIME_SEC, SLEEP_TIME_NANO};
-
-/*
- * remaining time of sleep
- */
-struct timespec remaining;
-/*
- * return value of nanosleep
- */
-int timeGetter = 0;
-/*
- * actual job size that has been run
- * (violatileJobSize <= JobsList.size)
- */
-int violatileJobSize = -1;
-/*
- * number of job that has been run
- */
-int jobRun = 0;
+int interuptionFlag = 0;
 
 /*
  * struct for command line argument
@@ -336,11 +318,6 @@ pid_t demo_uqwordiply_runner(CmdArg paraExist, Job job,
     pid_t pidDemo = fork();
     if (pidDemo == 0) {
     	// demo child process
-    	/*close(stdoutTestProgToUqcmpFd[READ_END]);
-    	close(stdoutTestProgToUqcmpFd[WRITE_END]);
-    	close(stderrTestProgToUqcmpFd[READ_END]);
-	close(stderrTestProgToUqcmpFd[WRITE_END]);*/
-
     	int inputTest = open(job.inputFileName, O_RDONLY);
         dup2(inputTest, STDIN_FILENO);
         dup2(stdoutDemoProgToUqcmpFd[WRITE_END], STDOUT_FILENO);
@@ -644,18 +621,30 @@ bool process_killer(pid_t* uqcmpPid) {
  * 
  * Returns: the number of passed jobs
  */
-int prallel_runer(CmdArg paraExist, JobsList jobList, int passCounter) {
-    pid_t** uqcmpPid = (pid_t**)malloc(sizeof(pid_t*) * jobList.size);
-    int ignore[jobList.size]; //ignore the jobs that are not executable
-    violatileJobSize = jobList.size;
-    for (; jobRun < violatileJobSize; jobRun++) {
+int prallel_runer(CmdArg paraExist, JobsList* jobList, int passCounter) {
+    pid_t** uqcmpPid = (pid_t**)malloc(sizeof(pid_t*) * jobList->size);
+    int ignore[jobList->size]; //ignore the jobs that are not executable
+    int jobRun = 0;
+    for (; jobRun < jobList->size; jobRun++) {
     	printf("Starting job %d\n", jobRun + 1);
     	fflush(stdout);
     	uqcmpPid[jobRun] = 
-                job_runner(paraExist, jobList.job[jobRun], jobRun + 1);
+                job_runner(paraExist, jobList->job[jobRun], jobRun + 1);
     }
-    timeGetter = nanosleep(&start, &remaining);
-    for (int i = 0; i < violatileJobSize; i++) {
+    struct timespec start = {SLEEP_TIME_SEC, SLEEP_TIME_NANO};
+    struct timespec remaining = {0, 0};
+    int finishedSleep = nanosleep(&start, &remaining);
+        while(true) {
+            if (interuptionFlag == 1) {
+                finishedSleep = nanosleep(&remaining, &remaining);
+                jobList->size = jobRun + 1;
+                interuptionFlag = 0;
+            }
+            if (finishedSleep == 0) {
+                break;
+            }
+        }
+    for (int i = 0; i < jobList->size; i++) {
         if (!process_killer(uqcmpPid[i])) {
             printf("Job %d : Unable to execute test\n", i + 1);
             fflush(stdout);
@@ -663,7 +652,7 @@ int prallel_runer(CmdArg paraExist, JobsList jobList, int passCounter) {
         }
         ignore[i] = 0;
     }
-    for (int i = 0; i < violatileJobSize; i++) {
+    for (int i = 0; i < jobList->size; i++) {
         if (!ignore[i]) {
             (result_reporter(uqcmpPid[i], i + 1))? passCounter++ : passCounter;
     	    free(uqcmpPid[i]);
@@ -677,26 +666,37 @@ int prallel_runer(CmdArg paraExist, JobsList jobList, int passCounter) {
  * linear_runner()
  * --------------------
  * paraExist: commandline argument's struct
- * jobList: list of job
+ * jobList: pointer tolist of job
  * passCounter: counter of passed job
  * 
  * Returns: number of job that is passed 
  */
-int linear_runner(CmdArg paraExist, JobsList jobList, int passCounter) {
-    violatileJobSize = jobList.size;
-    for (; jobRun < violatileJobSize; jobRun++) {
+int linear_runner(CmdArg paraExist, JobsList* jobList, int passCounter) {
+    for (int jobRun = 0; jobRun < jobList->size; jobRun++) {
     	printf("Starting job %d\n", jobRun + 1);
     	fflush(stdout);
     	pid_t* uqcmpPid = job_runner(paraExist, 
-                jobList.job[jobRun], jobRun + 1);
-    	timeGetter = nanosleep(&start, &remaining);
+                jobList->job[jobRun], jobRun + 1);
+        struct timespec start = {SLEEP_TIME_SEC, SLEEP_TIME_NANO};
+        struct timespec remaining = {0, 0};
+        int finishedSleep = nanosleep(&start, &remaining);
+        while(true) {
+            if (interuptionFlag == 1) {
+                finishedSleep = nanosleep(&remaining, &remaining);
+                jobList->size = jobRun + 1;
+                interuptionFlag = 0;
+            }
+            if (finishedSleep == 0) {
+                break;
+            }
+        }
     	//kill
     	if (!process_killer(uqcmpPid)) {
             printf("One or more processes can't be killed\n");
             fflush(stdout);
             continue; //skip the rest of the loop
         }
-    	(result_reporter(uqcmpPid, jobRun+1))? passCounter++ : passCounter;
+    	(result_reporter(uqcmpPid, jobRun + 1))? passCounter++ : passCounter;
     	free(uqcmpPid);
     }
     return passCounter;
@@ -713,9 +713,7 @@ int linear_runner(CmdArg paraExist, JobsList jobList, int passCounter) {
  * sig : signal number 
  */
 void handle_sigint(int sig) {
-    violatileJobSize = jobRun + 1;
-    // if remaining time is not 0, then continue to sleep
-    timeGetter = nanosleep(&remaining, &remaining);
+    interuptionFlag = 1;
 }
 
 int main(int argc, char* argv[]) {
@@ -729,19 +727,16 @@ int main(int argc, char* argv[]) {
     JobsList jobList = line_splitter(jobFile, paraExist);
     int passCounter = 0;
     if (paraExist.flag[PARALLEL] == 1) { // parallel run
-        passCounter = prallel_runer(paraExist, jobList, passCounter);
+        passCounter = prallel_runer(paraExist, &jobList, passCounter);
     } else { // linear run
-	passCounter = linear_runner(paraExist, jobList, passCounter);
-    }
-    if (violatileJobSize == -1) {
-	violatileJobSize = jobList.size;
+	passCounter = linear_runner(paraExist, &jobList, passCounter);
     }
     printf("testuqwordiply: %d out of %d tests passed\n", 
-            passCounter, violatileJobSize);
+            passCounter, jobList.size);
     paraExist.jobfile = NULL;
     free(paraExist.jobfile);
     paraExist.testprogram = NULL;
     free(paraExist.testprogram);
     free(jobFile);
-    return (violatileJobSize - passCounter) ? 1 : 0;
+    return (jobList.size - passCounter) ? 1 : 0;
 }
