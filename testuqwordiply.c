@@ -282,6 +282,168 @@ JobsList line_splitter(FILE* jobFile, CmdArg paraExist) {
 }
 
 /*
+ * test_prog_runner()
+ * --------------------
+ * run the test program
+ * 
+ * paraExist: a struct that contains the information of command line argument
+ *      (see CmdArg struct)
+ * job: a struct that contains the information of a job
+ * stdoutTestProgToUqcmpFd: pointer to the file descriptor that will be used
+ *     to write the stdout of test program to uqcmp
+ * stderrTestProgToUqcmpFd: pointer to the file descriptor that will be used
+ *    to write the stderr of test program to uqcmp
+ * 
+ * Returns: the pid of the test program
+ */
+pid_t test_prog_runner(CmdArg paraExist, Job job, 
+        int* stdoutTestProgToUqcmpFd, int* stderrTestProgToUqcmpFd) {
+    pid_t pidTestProg = fork();
+    if (pidTestProg == 0) {
+    	// testprogram child process
+    	int inputTest = open(job.inputFileName, O_RDONLY);
+    	dup2(inputTest, STDIN_FILENO);
+        dup2(stdoutTestProgToUqcmpFd[WRITE_END], STDOUT_FILENO);
+    	close(stdoutTestProgToUqcmpFd[READ_END]);
+    	close(stdoutTestProgToUqcmpFd[WRITE_END]);
+	
+        dup2(stderrTestProgToUqcmpFd[WRITE_END], STDERR_FILENO);
+        close(stderrTestProgToUqcmpFd[READ_END]);
+        close(stderrTestProgToUqcmpFd[WRITE_END]);
+    	execvp(paraExist.testprogram, job.args);
+        _exit(99);
+    }
+    return pidTestProg;
+}
+
+/*
+ * demo_prog_runner()
+ * --------------------
+ * run the demo-uqwordiply program
+ * 
+ * paraExist: a struct that contains the information of command line argument
+ *      (see CmdArg struct)
+ * job: a struct that contains the information of a job
+ * stdoutDemoProgToUqcmpFd: pointer to the file descriptor that will be used
+ *      to write the stdout of demo-uqwordiply program to uqcmp
+ * stderrDemoProgToUqcmpFd: pointer to the file descriptor that will be used
+ *      to write the stderr of demo-uqwordiply program to uqcmp
+ * 
+ * Returns: the pid of the demo-uqwordiply program
+ */
+pid_t demo_uqwordiply_runner(CmdArg paraExist, Job job, 
+        int* stdoutDemoProgToUqcmpFd, int* stderrDemoProgToUqcmpFd) {
+    pid_t pidDemo = fork();
+    if (pidDemo == 0) {
+    	// demo child process
+    	/*close(stdoutTestProgToUqcmpFd[READ_END]);
+    	close(stdoutTestProgToUqcmpFd[WRITE_END]);
+    	close(stderrTestProgToUqcmpFd[READ_END]);
+	close(stderrTestProgToUqcmpFd[WRITE_END]);*/
+
+    	int inputTest = open(job.inputFileName, O_RDONLY);
+        dup2(inputTest, STDIN_FILENO);
+        dup2(stdoutDemoProgToUqcmpFd[WRITE_END], STDOUT_FILENO);
+        close(stdoutDemoProgToUqcmpFd[READ_END]);
+        close(stdoutDemoProgToUqcmpFd[WRITE_END]);
+        
+        dup2(stderrDemoProgToUqcmpFd[WRITE_END], STDERR_FILENO);
+        close(stderrDemoProgToUqcmpFd[READ_END]);
+        close(stderrDemoProgToUqcmpFd[WRITE_END]);
+        execvp("demo-uqwordiply", job.args);
+        _exit(99);
+    }
+    return pidDemo;
+}
+
+/*
+ * stdout_uqcmp_runner()
+ * --------------------
+ * run the uqcmp program for stdout
+ * 
+ * paraExist: a struct that contains the information of command line argument
+ *    (see CmdArg struct)
+ *      job: a struct that contains the information of a job
+ * stdoutTestProgToUqcmpFd: pointer to the file descriptor that will be used
+ *      to write the stdout of test program to uqcmp
+ * stdoutDemoProgToUqcmpFd: pointer to the file descriptor that will be used
+ *      to write the stdout of demo-uqwordiply program to uqcmp
+ * stderrTestProgToUqcmpFd: pointer to the file descriptor that will be used
+ *      to write the stderr of test program to uqcmp
+ * stderrDemoProgToUqcmpFd: pointer to the file descriptor that will be used
+ *      to write the stderr of demo-uqwordiply program to uqcmp
+ * 
+ * Returns: the pid of the uqcmp program
+ */
+pid_t stdout_uqcmp_runner(int jobNo, CmdArg paraExist, Job job, 
+        int* stdoutTestProgToUqcmpFd, int* stdoutDemoProgToUqcmpFd, 
+        int* stderrTestProgToUqcmpFd, int* stderrDemoProgToUqcmpFd) {
+    pid_t pidUqcmpStdout = fork();
+    if (pidUqcmpStdout == 0) {
+    	// uqcmp stdout child process
+        close(stderrTestProgToUqcmpFd[READ_END]);
+        close(stderrTestProgToUqcmpFd[WRITE_END]);
+    	close(stderrDemoProgToUqcmpFd[READ_END]);
+	close(stderrDemoProgToUqcmpFd[WRITE_END]);
+	//dup2(devNull, STDIN_FILENO); // ignore stdin
+        if (paraExist.flag[QUIET] == 1) {
+            int devNull = open("/dev/null", O_WRONLY);
+	    dup2(devNull, STDOUT_FILENO); // ignore stdout
+        }
+    	dup2(stdoutTestProgToUqcmpFd[READ_END], UQCMP1_END);
+        close(stdoutTestProgToUqcmpFd[READ_END]);
+        close(stdoutTestProgToUqcmpFd[WRITE_END]);
+
+        dup2(stdoutDemoProgToUqcmpFd[READ_END], UQCMP2_END);
+        close(stdoutDemoProgToUqcmpFd[READ_END]);
+        close(stdoutDemoProgToUqcmpFd[WRITE_END]);
+        char uqcmpName[UQCMP_PREFIX_LEN];
+        sprintf(uqcmpName, "Job %d stdout", jobNo);
+        execlp("uqcmp", "uqcmp", uqcmpName, NULL);
+        _exit(99);
+    }
+    return pidUqcmpStdout;
+}
+
+/*
+ * stderr_uqcmp_runner()
+ * --------------------
+ * run the uqcmp program for stderr
+ * 
+ * paraExist: a struct that contains the information of command line argument
+ *   (see CmdArg struct)
+ * job: a struct that contains the information of a job
+ * stderrTestProgToUqcmpFd: pointer to the file descriptor that will be used
+ *   to write the stderr of test program to uqcmp
+ * stderrDemoProgToUqcmpFd: pointer to the file descriptor that will be used
+ *  to write the stderr of demo-uqwordiply program to uqcmp
+ * 
+ * Returns: the pid of the uqcmp program
+ */
+pid_t stderr_uqcmp_runner(int jobNo, CmdArg paraExist, Job job, 
+        int* stderrTestProgToUqcmpFd, int* stderrDemoProgToUqcmpFd) {
+    pid_t pidUqcmpStderr = fork();
+    if (pidUqcmpStderr == 0) {
+        // uqcmp stderr child process
+        if (paraExist.flag[QUIET] == 1) {
+	    int devNull = open("/dev/null", O_WRONLY);
+	    dup2(devNull, STDOUT_FILENO); // ignore stdout
+	}
+	dup2(stderrTestProgToUqcmpFd[READ_END], UQCMP1_END);
+	close(stderrTestProgToUqcmpFd[READ_END]);
+	close(stderrTestProgToUqcmpFd[WRITE_END]);
+	dup2(stderrDemoProgToUqcmpFd[READ_END], UQCMP2_END);
+	close(stderrDemoProgToUqcmpFd[READ_END]);
+	close(stderrDemoProgToUqcmpFd[WRITE_END]);
+	char uqcmpName[UQCMP_PREFIX_LEN];
+	sprintf(uqcmpName, "Job %d stderr", jobNo);
+	execlp("uqcmp", "uqcmp", uqcmpName, NULL);
+	_exit(99);
+    }
+    return pidUqcmpStderr;
+}
+
+/*
  * job_runner()
  * --------------------
  * run the given job
@@ -306,21 +468,9 @@ pid_t* job_runner(CmdArg paraExist, Job job, int jobNo) {
     	perror("Creating pipe stderr from test program to uqcmp error!");
         exit(1);
     }
-    pid_t pidTestProg = fork();
-    if (pidTestProg == 0) {
-    	// testprogram child process
-    	int inputTest = open(job.inputFileName, O_RDONLY);
-    	dup2(inputTest, STDIN_FILENO);
-        dup2(stdoutTestProgToUqcmpFd[WRITE_END], STDOUT_FILENO);
-    	close(stdoutTestProgToUqcmpFd[READ_END]);
-    	close(stdoutTestProgToUqcmpFd[WRITE_END]);
-	
-        dup2(stderrTestProgToUqcmpFd[WRITE_END], STDERR_FILENO);
-        close(stderrTestProgToUqcmpFd[READ_END]);
-        close(stderrTestProgToUqcmpFd[WRITE_END]);
-    	execvp(paraExist.testprogram, job.args);
-        _exit(99);
-    }
+    pid_t pidTestProg = test_prog_runner(paraExist, job,
+            stdoutTestProgToUqcmpFd, stderrTestProgToUqcmpFd);
+    
     if (pipe(stdoutDemoProgToUqcmpFd) == -1) {
         perror("Creating pipe stdout from Demo to uqcmp error!");
         exit(1);
@@ -329,87 +479,78 @@ pid_t* job_runner(CmdArg paraExist, Job job, int jobNo) {
     	perror("Creating pipe stderr from Demo to uqcmp error!");
         exit(1);
     }
-    pid_t pidDemo = fork();
-    if (pidDemo == 0) {
-    	// demo child process
-    	close(stdoutTestProgToUqcmpFd[READ_END]);
-    	close(stdoutTestProgToUqcmpFd[WRITE_END]);
-    	close(stderrTestProgToUqcmpFd[READ_END]);
-	close(stderrTestProgToUqcmpFd[WRITE_END]);
 
-    	int inputTest = open(job.inputFileName, O_RDONLY);
-        dup2(inputTest, STDIN_FILENO);
-        dup2(stdoutDemoProgToUqcmpFd[WRITE_END], STDOUT_FILENO);
-        close(stdoutDemoProgToUqcmpFd[READ_END]);
-        close(stdoutDemoProgToUqcmpFd[WRITE_END]);
-        
-        dup2(stderrDemoProgToUqcmpFd[WRITE_END], STDERR_FILENO);
-        close(stderrDemoProgToUqcmpFd[READ_END]);
-        close(stderrDemoProgToUqcmpFd[WRITE_END]);
-        execvp("demo-uqwordiply", job.args);
-        _exit(99);
-    }
-    pid_t pidUqcmpStdout = fork();
-    if (pidUqcmpStdout == 0) {
-    	// uqcmp stdout child process
-    	close(stderrTestProgToUqcmpFd[READ_END]);
-	close(stderrTestProgToUqcmpFd[WRITE_END]);
-    	close(stderrDemoProgToUqcmpFd[READ_END]);
-	close(stderrDemoProgToUqcmpFd[WRITE_END]);
-	    //dup2(devNull, STDIN_FILENO); // ignore stdin
-        if (paraExist.flag[QUIET] == 1) {
-            int devNull = open("/dev/null", O_WRONLY);
-	    dup2(devNull, STDOUT_FILENO); // ignore stdout
-        }
-    	dup2(stdoutTestProgToUqcmpFd[READ_END], UQCMP1_END);
-        close(stdoutTestProgToUqcmpFd[READ_END]);
-        close(stdoutTestProgToUqcmpFd[WRITE_END]);
-
-        dup2(stdoutDemoProgToUqcmpFd[READ_END], UQCMP2_END);
-        close(stdoutDemoProgToUqcmpFd[READ_END]);
-        close(stdoutDemoProgToUqcmpFd[WRITE_END]);
-        char uqcmpName[UQCMP_PREFIX_LEN];
-        sprintf(uqcmpName, "Job %d stdout", jobNo);
-        execlp("uqcmp", "uqcmp", uqcmpName, NULL);
-        _exit(99);
-    }
-    // parent process
+    pid_t pidDemo = demo_uqwordiply_runner(paraExist, job, 
+            stdoutDemoProgToUqcmpFd, stderrDemoProgToUqcmpFd);
+    pid_t pidUqcmpStdout = stdout_uqcmp_runner(jobNo, paraExist, job, 
+            stdoutTestProgToUqcmpFd, stdoutDemoProgToUqcmpFd, 
+            stderrTestProgToUqcmpFd, stderrDemoProgToUqcmpFd);
+    
     close(stdoutTestProgToUqcmpFd[READ_END]);
     close(stdoutTestProgToUqcmpFd[WRITE_END]);
-	
     close(stdoutDemoProgToUqcmpFd[READ_END]);
     close(stdoutDemoProgToUqcmpFd[WRITE_END]);
-    pid_t pidUqcmpStderr = fork();
-    if (pidUqcmpStderr == 0) {
-        // uqcmp stderr child process
-        if (paraExist.flag[QUIET] == 1) {
-	    int devNull = open("/dev/null", O_WRONLY);
-	    dup2(devNull, STDOUT_FILENO); // ignore stdout
-	}
-	dup2(stderrTestProgToUqcmpFd[READ_END], UQCMP1_END);
-	close(stderrTestProgToUqcmpFd[READ_END]);
-	close(stderrTestProgToUqcmpFd[WRITE_END]);
-	dup2(stderrDemoProgToUqcmpFd[READ_END], UQCMP2_END);
-	close(stderrDemoProgToUqcmpFd[READ_END]);
-	close(stderrDemoProgToUqcmpFd[WRITE_END]);
-	char uqcmpName[UQCMP_PREFIX_LEN];
-	sprintf(uqcmpName, "Job %d stderr", jobNo);
-	execlp("uqcmp", "uqcmp", uqcmpName, NULL);
-	_exit(99);
-    }
-    // parent process
+    pid_t pidUqcmpStderr = stderr_uqcmp_runner(jobNo, paraExist, job, 
+            stderrTestProgToUqcmpFd, stderrDemoProgToUqcmpFd);
+    
     close(stderrTestProgToUqcmpFd[READ_END]);
     close(stderrTestProgToUqcmpFd[WRITE_END]);
-	
     close(stderrDemoProgToUqcmpFd[READ_END]);
     close(stderrDemoProgToUqcmpFd[WRITE_END]);
-
     pid_t* uqcmpPid = (pid_t*)malloc(sizeof(pid_t) * 4);
+
     uqcmpPid[PID_TESTPROG] = pidTestProg;
     uqcmpPid[PID_DEMO] = pidDemo;
     uqcmpPid[PID_UQCMP_STDOUT] = pidUqcmpStdout;
     uqcmpPid[PID_UQCMP__STDERR] = pidUqcmpStderr;
     return uqcmpPid;
+}
+
+/*
+ * print_match()
+ * --------------------
+ * print the match message
+ * 
+ * jobNo: the index of that job
+ * type: the type of the match message
+ *     should be stdout/stderr/Exit status
+ * 
+ * Returns: void
+ */
+void print_match(int jobNo, char* type) {
+    printf("Job %d: %s matches\n", jobNo, type);
+    fflush(stdout);
+}
+
+/*
+ * print_differ()
+ * --------------------
+ * print the differ message
+ * 
+ * jobNo: the index of that job
+ * type: the type of the differ message
+ *    should be stdout/stderr/Exit status
+ * 
+ * Returns: void
+ */
+void print_differ(int jobNo, char* type) {
+    // type 
+    printf("Job %d: %s differs\n", jobNo, type);
+    fflush(stdout);
+}
+
+/*
+ * print_error()
+ * --------------------
+ * print the error message
+ * 
+ * jobNo: the index of that job
+ * 
+ * Returns: void
+ */
+void print_error(int jobNo) {
+    printf("Job %d : Unable to execute test\n",jobNo);
+    fflush(stdout);
 }
 
 /*
@@ -434,37 +575,39 @@ bool result_reporter(pid_t* pids, int jobNo) {
     waitpid(pids[PID_UQCMP_STDOUT], &statusStdoutUqcmp, 0);
     fflush(stdout);
     if (WIFEXITED(statusStdoutUqcmp)) {
-	//exit statue will be here
     	if (WEXITSTATUS(statusStdoutUqcmp) == 0) {
-            printf("Job %d: Stdout matches\n", jobNo);
-	    fflush(stdout);
+            print_match(jobNo, "Stdout");
     	    passCounter++;
-	} else {
-            printf("Job %d: Stdout differs\n", jobNo);
-            fflush(stdout);
+	} else if (WEXITSTATUS(statusStdoutUqcmp) == 99) {
+            print_error(jobNo);
+            return false;
+        } else {
+            print_differ(jobNo, "Stdout");
         }
     }
     waitpid(pids[PID_UQCMP__STDERR], &statusStderrUqcmp, 0);
     if (WIFEXITED(statusStderrUqcmp)) {
-	//exit statue will be here
 	if (WEXITSTATUS(statusStderrUqcmp) == 0) {
-            printf("Job %d: Stderr matches\n", jobNo);
-	    fflush(stdout);
+            print_match(jobNo, "Stderr");
 	    passCounter++;
+        } else if (WEXITSTATUS(statusStderrUqcmp) == 99) {
+            print_error(jobNo);
+            return false;
         } else {
-            printf("Job %d: Stderr differs\n", jobNo);
-            fflush(stdout);
+            print_differ(jobNo, "Stderr");
         }
     }
     waitpid(pids[PID_TESTPROG], &statusTestprog, 0);
     waitpid(pids[PID_DEMO], &statusDemo, 0);
     if (WEXITSTATUS(statusTestprog) == WEXITSTATUS(statusDemo)) {
         passCounter++;
-    	printf("Job %d: Exit status matches\n", jobNo);
-        fflush(stdout);
+    	print_match(jobNo, "Exit status");
+    } else if (WEXITSTATUS(statusTestprog) == 99 || 
+            WEXITSTATUS(statusDemo) == 99) {
+        print_error(jobNo);
+        return false;
     } else {
-        printf("Job %d: Exit status differs\n", jobNo);
-    	fflush(stdout);
+        print_differ(jobNo, "Exit status");
     }
     return (passCounter == 3);
 }
@@ -549,7 +692,7 @@ int linear_runner(CmdArg paraExist, JobsList jobList, int passCounter) {
     	timeGetter = nanosleep(&start, &remaining);
     	//kill
     	if (!process_killer(uqcmpPid)) {
-            printf("Job %d : Unable to execute test\n",jobRun + 1);
+            printf("One or more processes can't be killed\n");
             fflush(stdout);
             continue; //skip the rest of the loop
         }
