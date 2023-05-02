@@ -159,7 +159,6 @@ void exit_code_six(char* filename) {
  *        (see CmdArg struct)
  */
 CmdArg pre_run_checking(int argc, char* argv[]) {
-    //printf("argc = %d\n", argc);
     CmdArg paraExist;
     paraExist.flag[QUIET] = 0;
     paraExist.flag[PARALLEL] = 0;
@@ -213,16 +212,17 @@ CmdArg pre_run_checking(int argc, char* argv[]) {
 int comma_counter(char* line) {
     int commaNum = 0;
     for (int count = 0; line[count]; count++) {
-	    if (line[count]== ',') {
-	        if (commaNum < 1) {
+	if (line[count] == ',') {
+	    if (commaNum < 1) {
                 commaNum++;
-	        } else {
+	    } else {
                 return 0;
-	        }    
-	    }
- 	}
+	    }    
+	}
+    }
     return 1;
 }
+
 /*
  * line_splitter()
  * --------------------
@@ -398,7 +398,6 @@ pid_t* job_runner(CmdArg paraExist, Job job, int jobNo) {
 	_exit(99);
     }
     // parent process
-
     close(stderrTestProgToUqcmpFd[READ_END]);
     close(stderrTestProgToUqcmpFd[WRITE_END]);
 	
@@ -471,6 +470,27 @@ bool result_reporter(pid_t* pids, int jobNo) {
 }
 
 /*
+ * process_killer()
+ * ----------------
+ * This function will kill all the processes 
+ * that are still running in one job.
+ * 
+ * uqcmpPid: the array of pid of test program, demo-uqwordiply and uqcmp
+ * 
+ * Returns: true if all the processes are killed, false otherwise
+ */
+bool process_killer(pid_t* uqcmpPid) {
+    if (kill(uqcmpPid[PID_TESTPROG], SIGKILL)
+            || kill(uqcmpPid[PID_DEMO], SIGKILL)
+            || kill(uqcmpPid[PID_UQCMP_STDOUT], SIGKILL)
+            || kill(uqcmpPid[PID_UQCMP__STDERR], SIGKILL)) {
+        return false;
+    } else {
+        return true;
+    }
+}
+
+/*
  * prallel_runer()
  * ------------------
  * This function is used to run all the jobs in parallel.
@@ -483,6 +503,7 @@ bool result_reporter(pid_t* pids, int jobNo) {
  */
 int prallel_runer(CmdArg paraExist, JobsList jobList, int passCounter) {
     pid_t** uqcmpPid = (pid_t**)malloc(sizeof(pid_t*) * jobList.size);
+    int ignore[jobList.size]; //ignore the jobs that are not executable
     violatileJobSize = jobList.size;
     for (; jobRun < violatileJobSize; jobRun++) {
     	printf("Starting job %d\n", jobRun + 1);
@@ -492,14 +513,18 @@ int prallel_runer(CmdArg paraExist, JobsList jobList, int passCounter) {
     }
     timeGetter = nanosleep(&start, &remaining);
     for (int i = 0; i < violatileJobSize; i++) {
-        kill(uqcmpPid[i][PID_TESTPROG], SIGKILL);
-    	kill(uqcmpPid[i][PID_DEMO], SIGKILL);
-        kill(uqcmpPid[i][PID_UQCMP_STDOUT], SIGKILL);
-    	kill(uqcmpPid[i][PID_UQCMP__STDERR], SIGKILL);
+        if (!process_killer(uqcmpPid[i])) {
+            printf("Job %d : Unable to execute test\n", i + 1);
+            fflush(stdout);
+            ignore[i] = 1;
+        }
+        ignore[i] = 0;
     }
     for (int i = 0; i < violatileJobSize; i++) {
-        (result_reporter(uqcmpPid[i], i+1))? passCounter++ : passCounter;
-    	free(uqcmpPid[i]);
+        if (!ignore[i]) {
+            (result_reporter(uqcmpPid[i], i + 1))? passCounter++ : passCounter;
+    	    free(uqcmpPid[i]);
+        }
     }
     free(uqcmpPid);
     return passCounter;
@@ -523,10 +548,11 @@ int linear_runner(CmdArg paraExist, JobsList jobList, int passCounter) {
                 jobList.job[jobRun], jobRun + 1);
     	timeGetter = nanosleep(&start, &remaining);
     	//kill
-    	kill(uqcmpPid[PID_TESTPROG], SIGKILL);
-    	kill(uqcmpPid[PID_DEMO], SIGKILL);
-    	kill(uqcmpPid[PID_UQCMP_STDOUT], SIGKILL);
-    	kill(uqcmpPid[PID_UQCMP__STDERR], SIGKILL);
+    	if (!process_killer(uqcmpPid)) {
+            printf("Job %d : Unable to execute test\n",jobRun + 1);
+            fflush(stdout);
+            continue; //skip the rest of the loop
+        }
     	(result_reporter(uqcmpPid, jobRun+1))? passCounter++ : passCounter;
     	free(uqcmpPid);
     }
